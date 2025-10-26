@@ -210,12 +210,22 @@ class Resolver:
                 # 处理ISP信息
                 agent_isp = agent_ip_info.get('isp').replace('中国', '')
                 dst_isp = dst_ip_info.get('isp').replace('中国', '')
-                
+                agent_province = agent_ip_info.get('province')
+                dst_province = dst_ip_info.get('province')
+
                 # 设置流量类型
                 if agent_isp != "未知" and dst_isp != "未知" and agent_isp == dst_isp:
-                    source['flow_isp_type'] = '同网省内' if agent_ip_info.get('province') == dst_ip_info.get('province') else '同网跨省'
+                    # 同网情况
+                    source['flow_isp_type'] = '同网省内' if agent_province == dst_province else '同网跨省'
                 else:
-                    source['flow_isp_type'] = '异网(未知)' if not dst_isp else f'异网({dst_isp})'
+                    # 异网情况，也需要区分省内省外
+                    if not dst_isp or dst_isp == "未知":
+                        source['flow_isp_type'] = '异网省内(未知)' if agent_province == dst_province else '异网跨省(未知)'
+                    else:
+                        if agent_province == dst_province:
+                            source['flow_isp_type'] = f'异网省内({dst_isp})'
+                        else:
+                            source['flow_isp_type'] = f'异网跨省({dst_isp})'
                     
                 # 获取cacti流量图信息
                 cacti_data = sflow_cacti_data_map.get(int(config['relation_cacti_graph_id']),{})
