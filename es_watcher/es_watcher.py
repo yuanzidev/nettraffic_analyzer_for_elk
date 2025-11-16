@@ -1,0 +1,360 @@
+import datetime
+import time
+from elasticsearch import Elasticsearch
+import subprocess
+import logging
+from datetime import timezone, timedelta
+from logging.handlers import TimedRotatingFileHandler
+import os
+import requests
+import re
+import threading
+import schedule
+
+
+dingtalk_webhook = "https://oapi.dingtalk.com/robot/send?access_token=6023ab04c155773b6889b01a0ca4ce691812bd359aaedefafd4f8644af35f111"
+
+# 需要清理的索引前缀列表
+INDEX_PREFIXES_TO_CLEAN = [
+    "cactlyze",
+    "ipbandwidth",
+    "ipbw",
+    "sflow",
+    "sflow_cacti",
+    "sms"
+]
+
+# 索引保留天数
+INDEX_RETENTION_DAYS = 75
+
+# 创建logs目录（如果不存在）
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# 配置日志
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# 创建控制台处理器
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+
+# 创建文件处理器，每天轮换一次，保留7天的日志
+file_handler = TimedRotatingFileHandler(
+    filename='logs/es_check.log',
+    when='midnight',
+    interval=1,
+    backupCount=7,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+
+# 添加处理器到logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+
+def connect_elasticsearch():
+    """
+    连接到Elasticsearch服务器
+    :return: Elasticsearch客户端实例
+    """
+    try:
+        es = Elasticsearch(
+            ["http://localhost:9200"],
+            basic_auth=("nettraffic_analyzer", "nettraffic_analyzer")
+        )
+        if es.ping():
+            logger.info("成功连接到ES")
+            return es
+        else:
+            logger.error("无法连接到ES")
+            return None
+    except Exception as e:
+        logger.error(f"连接ES时发生错误: {str(e)}")
+        return None
+
+
+def check_index_updates(es, index_name):
+    """
+    检查指定索引在最近一分钟内是否有更新
+    :param es: Elasticsearch客户端实例
+    :param index_name: 要检查的索引名称
+    :return: 布尔值，表示是否有更新
+    """
+    try:
+        now = datetime.datetime.utcnow()
+        one_minute_ago = now - datetime.timedelta(minutes=1)
+
+        # 构建查询，使用count API只获取数量
+        query = {
+            "query": {
+                "range": {
+                    "@timestamp": {
+                        "gte": one_minute_ago.isoformat(),
+                        "lte": now.isoformat()
+                    }
+                }
+            }
+        }
+
+        # 只获取文档数量
+        result = es.count(index=index_name, body=query)
+
+        # 如果有匹配的文档，说明有更新
+        return result['count'] > 0
+    except Exception as e:
+        logger.error(f"检查索引更新时发生错误: {str(e)}")
+        return False
+
+
+def send_dingtalk_message(webhook, message):
+    """
+    发送钉钉消息
+    :param webhook: 钉钉机器人webhook地址
+    :param message: 要发送的消息内容
+    """
+    headers = {'Content-Type': 'application/json'}
+    data = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": "ELK监控告警",
+            "text": message
+        }
+    }
+    try:
+        response = requests.post(webhook, json=data, headers=headers)
+        if response.status_code == 200:
+            logger.info("钉钉消息发送成功")
+        else:
+            logger.warning("钉钉消息发送失败，正在重试...")
+            # 重试发送钉钉消息
+            retry_count = 10  # 设置重试次数
+            for i in range(retry_count):
+                time.sleep(2)  # 重试前等待2秒
+                response = requests.post(webhook, json=data, headers=headers)
+                if response.status_code == 200:
+                    logger.info(f"钉钉消息重试第{i+1}次成功")
+                    break
+            else:
+                logger.error("重试发送钉钉消息失败")
+    except Exception as e:
+        logger.error(f"发送钉钉消息时发生错误: {str(e)}")
+
+
+def parse_index_date(index_name, prefix):
+    """
+    从索引名称中解析日期
+    :param index_name: 索引名称，如 cactlyze-2025.09.14
+    :param prefix: 索引前缀
+    :return: datetime对象，如果解析失败返回None
+    """
+    try:
+        # 匹配格式：prefix-YYYY.MM.DD
+        pattern = f"^{re.escape(prefix)}-(\d{{4}})\.(\d{{2}})\.(\d{{2}})$"
+        match = re.match(pattern, index_name)
+
+        if match:
+            year, month, day = match.groups()
+            return datetime.datetime(int(year), int(month), int(day))
+        return None
+    except Exception as e:
+        logger.error(f"解析索引日期时发生错误: {index_name}, {str(e)}")
+        return None
+
+
+def cleanup_old_indices(es, dry_run=False):
+    """
+    清理超过指定天数的旧索引
+    :param es: Elasticsearch客户端实例
+    :param dry_run: 如果为True，只打印将要删除的索引，不实际删除
+    :return: (删除的索引列表, 失败的索引列表)
+    """
+    if not es:
+        logger.error("ES连接不可用，无法执行清理")
+        return [], []
+
+    deleted_indices = []
+    failed_indices = []
+    current_date = datetime.datetime.now()
+    cutoff_date = current_date - timedelta(days=INDEX_RETENTION_DAYS)
+
+    logger.info(f"开始清理索引，将删除 {cutoff_date.strftime('%Y-%m-%d')} 之前创建的索引")
+
+    try:
+        # 获取所有索引
+        all_indices = es.indices.get_alias(index="*")
+
+        for index_name in all_indices:
+            # 检查每个前缀
+            for prefix in INDEX_PREFIXES_TO_CLEAN:
+                if index_name.startswith(prefix + "-"):
+                    # 解析索引日期
+                    index_date = parse_index_date(index_name, prefix)
+
+                    if index_date and index_date < cutoff_date:
+                        if dry_run:
+                            logger.info(f"[DRY RUN] 将删除索引: {index_name} (创建日期: {index_date.strftime('%Y-%m-%d')})")
+                            deleted_indices.append(index_name)
+                        else:
+                            try:
+                                # 删除索引
+                                es.indices.delete(index=index_name)
+                                logger.info(f"成功删除索引: {index_name} (创建日期: {index_date.strftime('%Y-%m-%d')})")
+                                deleted_indices.append(index_name)
+                            except Exception as e:
+                                logger.error(f"删除索引 {index_name} 失败: {str(e)}")
+                                failed_indices.append(index_name)
+                    break  # 已匹配到前缀，不需要继续检查其他前缀
+
+        if not deleted_indices and not failed_indices:
+            logger.info("没有找到需要清理的索引")
+        else:
+            logger.info(f"清理完成，删除了 {len(deleted_indices)} 个索引，失败 {len(failed_indices)} 个")
+
+        return deleted_indices, failed_indices
+
+    except Exception as e:
+        logger.error(f"清理索引时发生错误: {str(e)}")
+        return deleted_indices, failed_indices
+
+
+def send_cleanup_notification(deleted_indices, failed_indices):
+    """
+    发送索引清理结果的钉钉通知
+    :param deleted_indices: 成功删除的索引列表
+    :param failed_indices: 删除失败的索引列表
+    """
+    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # 构建消息内容
+    message = f"## 【ELK索引清理通知】\n\n"
+    message += f"**清理时间**: {current_time}\n\n"
+    message += f"**清理策略**: 删除 {INDEX_RETENTION_DAYS} 天前的索引\n\n"
+    message += f"**清理前缀**: {', '.join(INDEX_PREFIXES_TO_CLEAN)}\n\n"
+
+    if deleted_indices:
+        message += f"### ✅ 成功删除 {len(deleted_indices)} 个索引\n\n"
+        # 如果索引太多，只显示前10个和后5个
+        if len(deleted_indices) > 15:
+            for idx in deleted_indices[:10]:
+                message += f"- {idx}\n"
+            message += f"- ... (省略 {len(deleted_indices) - 15} 个)\n"
+            for idx in deleted_indices[-5:]:
+                message += f"- {idx}\n"
+        else:
+            for idx in deleted_indices:
+                message += f"- {idx}\n"
+        message += "\n"
+    else:
+        message += "### ℹ️ 没有需要删除的索引\n\n"
+
+    if failed_indices:
+        message += f"### ❌ 删除失败 {len(failed_indices)} 个索引\n\n"
+        for idx in failed_indices:
+            message += f"- {idx}\n"
+        message += "\n"
+
+    message += f"**主机IP**: 220.202.54.74\n"
+
+    # 发送钉钉通知
+    send_dingtalk_message(dingtalk_webhook, message)
+
+
+def scheduled_cleanup():
+    """
+    定时清理任务
+    """
+    logger.info("执行定时索引清理任务")
+    es = connect_elasticsearch()
+    if es:
+        deleted_indices, failed_indices = cleanup_old_indices(es)
+        send_cleanup_notification(deleted_indices, failed_indices)
+    else:
+        logger.error("无法连接ES，索引清理任务失败")
+        send_dingtalk_message(
+            dingtalk_webhook,
+            f"【ELK索引清理失败】\n\n无法连接到Elasticsearch，索引清理任务执行失败。\n\n**主机IP**: 220.202.54.74\n**时间**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+
+def run_schedule():
+    """
+    运行定时任务调度器
+    """
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # 每分钟检查一次是否有任务需要执行
+
+
+def initial_cleanup():
+    """
+    启动时执行的初始清理
+    """
+    logger.info("程序启动，执行初始索引清理")
+    es = connect_elasticsearch()
+    if es:
+        deleted_indices, failed_indices = cleanup_old_indices(es)
+        send_cleanup_notification(deleted_indices, failed_indices)
+    else:
+        logger.error("启动时无法连接ES，跳过初始清理")
+
+
+def monitor_index_updates(es):
+    """
+    监控索引更新的主循环
+    """
+    while True:
+        index_name = f"sflow-{datetime.datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+        try:
+            if not check_index_updates(es, index_name):
+                logger.warning(f"索引 {index_name} 在最近一分钟内没有更新")
+                send_dingtalk_message(
+                    dingtalk_webhook,
+                    f"【世捷通新ELK监控告警】索引 {index_name} 在最近一分钟内没有更新， 主机IP: 220.202.54.74"
+                )
+            else:
+                logger.info(f"索引 {index_name} 正常更新中")
+
+            # 等待一分钟
+            time.sleep(60)
+        except Exception as e:
+            logger.error(f"监控过程中发生错误: {str(e)}")
+            time.sleep(60)  # 发生错误时也等待一分钟后继续
+
+
+def main():
+    """
+    主函数，启动监控和清理任务
+    """
+    logger.info("==================== 程序启动 ====================")
+
+    # 连接ES
+    es = connect_elasticsearch()
+    if not es:
+        logger.error("无法启动程序，ES连接失败")
+        return
+
+    # 执行启动时的初始清理
+    initial_cleanup()
+
+    # 设置每周一早上6点执行清理任务
+    schedule.every().monday.at("06:00").do(scheduled_cleanup)
+    logger.info("已设置定时任务：每周一 06:00 执行索引清理")
+
+    # 启动定时任务线程
+    schedule_thread = threading.Thread(target=run_schedule, daemon=True)
+    schedule_thread.start()
+    logger.info("定时任务调度器已启动")
+
+    # 启动索引监控
+    logger.info("开始监控索引更新状态")
+    monitor_index_updates(es)
+
+
+if __name__ == "__main__":
+    main()
