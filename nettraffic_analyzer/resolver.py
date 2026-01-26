@@ -7,7 +7,7 @@ from enum import Enum
 import logging
 import re
 from nettraffic_analyzer.xdbSearcher import XdbSearcher
-from nettraffic_analyzer.utils import setup_logger, ipv6_search
+from nettraffic_analyzer.utils import setup_logger
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,8 @@ class Resolver:
                 config = json.load(f)
         except FileNotFoundError:
             config = {}      
-        self.db_host = config.get('db_host', 'localhost')
-        self.db_user = config.get('db_user', 'root')
-        self.db_password = config.get('db_password', 'mspvAtxchJA2')
-        self.db_database = config.get('db_database', 'ipv6')
+        # IPv6相关配置已移除，仅保留IPv4解析
+        pass
 
     @staticmethod
     def resolve_ip_region(original_content, ipv6=False):
@@ -177,19 +175,19 @@ class Resolver:
                     ip_info_cache[agent_ip] = self.rewrite_ipinfo(agent_ip, self.resolve_ip_region(result))
                 agent_ip_info = ip_info_cache[agent_ip]
     
-                # 使用缓存获取IP信息
+                # 使用缓存获取IP信息，暂时只处理IPv4
                 is_ipv4 = self.is_ipv4(dst_ip)
-                source['ipType'] = "ipv4" if is_ipv4 else "ipv6"
+                if not is_ipv4:
+                    # 跳过IPv6地址，只处理IPv4
+                    continue
                 
-                # 获取源IP和目标IP信息
+                source['ipType'] = "ipv4"
+                
+                # 获取源IP和目标IP信息（仅IPv4）
                 for ip in (src_ip, dst_ip):
                     if ip not in ip_info_cache:
-                        if is_ipv4:
-                            result = searcher.search(ip)
-                            ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
-                        else:
-                            result = ipv6_search(ip, self.db_host, self.db_user, self.db_password, self.db_database)
-                            ip_info_cache[ip] = self.resolve_ip_region(result, ipv6=True)
+                        result = searcher.search(ip)
+                        ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
                 
                 src_ip_info = ip_info_cache[src_ip]
                 dst_ip_info = ip_info_cache[dst_ip]
@@ -252,20 +250,18 @@ class Resolver:
                     ip_info_cache[local_ip] = self.resolve_ip_region(result)
                 local_ip_info = ip_info_cache[local_ip]
 
-                # 使用缓存获取IP信息
-                is_ipv4 = self.is_ipv4(remote_ip)
-                source['ipType'] = "ipv4" if is_ipv4 else "ipv6"
-                # 使用缓存获取IP信息
-                is_ipv4 = self.is_ipv4(local_ip)
-                # 获取源IP和目标IP信息
+                # 检查是否为IPv4，跳过IPv6地址
+                if not self.is_ipv4(local_ip) or not self.is_ipv4(remote_ip):
+                    continue
+                    
+                # 使用缓存获取IP信息，只处理IPv4
+                source['ipType'] = "ipv4"
+                
+                # 获取源IP和目标IP信息（仅IPv4）
                 for ip in (local_ip, remote_ip):
                     if ip not in ip_info_cache:
-                        if is_ipv4:
-                            result = searcher.search(ip)
-                            ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
-                        # else:
-                        #     result = ipv6_search(ip)
-                        #     ip_info_cache[ip] = self.resolve_ip_region(result, ipv6=True)
+                        result = searcher.search(ip)
+                        ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
                 
                 local_ip_info = ip_info_cache[local_ip]
                 remote_ip_info = ip_info_cache[remote_ip]
@@ -330,20 +326,18 @@ class Resolver:
                     ip_info_cache[local_ip] = self.resolve_ip_region(result)
                 local_ip_info = ip_info_cache[local_ip]
 
-                # 使用缓存获取IP信息
-                is_ipv4 = self.is_ipv4(local_ip)
-                source['ipType'] = "ipv4" if is_ipv4 else "ipv6"
-                # 使用缓存获取IP信息
-                is_ipv4 = self.is_ipv4(local_ip)
-                # 获取源IP和目标IP信息
+                # 检查是否为IPv4，跳过IPv6地址
+                if not self.is_ipv4(local_ip) or not self.is_ipv4(host_ip):
+                    continue
+                    
+                # 使用缓存获取IP信息，只处理IPv4
+                source['ipType'] = "ipv4"
+                
+                # 获取源IP和目标IP信息（仅IPv4）
                 for ip in (local_ip, host_ip):
                     if ip not in ip_info_cache:
-                        if is_ipv4:
-                            result = searcher.search(ip)
-                            ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
-                        # else:
-                        #     result = ipv6_search(ip)
-                        #     ip_info_cache[ip] = self.resolve_ip_region(result, ipv6=True)
+                        result = searcher.search(ip)
+                        ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
                 
                 local_ip_info = ip_info_cache[local_ip]                
                 # 处理ISP信息
