@@ -12,7 +12,10 @@ import threading
 import schedule
 
 
-dingtalk_webhook = "https://oapi.dingtalk.com/robot/send?access_token=6023ab04c155773b6889b01a0ca4ce691812bd359aaedefafd4f8644af35f111"
+# Telegram 告警配置
+TELEGRAM_API_URL = "https://alert.runyz.com/api/v1/alerts"
+TELEGRAM_API_TOKEN = "ah_2JKqxqInFeO1zEnfGaUbDuhMVmLTYznG"
+TELEGRAM_BOT_ID = "1"
 
 # 需要清理的索引前缀列表
 INDEX_PREFIXES_TO_CLEAN = [
@@ -112,38 +115,43 @@ def check_index_updates(es, index_name):
         return False
 
 
-def send_dingtalk_message(webhook, message):
+def send_telegram_alert(title, content, status="failure"):
     """
-    发送钉钉消息
-    :param webhook: 钉钉机器人webhook地址
-    :param message: 要发送的消息内容
+    发送 Telegram 告警消息
+    :param title: 告警标题
+    :param content: 告警内容
+    :param status: 告警状态，默认为 failure
     """
-    headers = {'Content-Type': 'application/json'}
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {TELEGRAM_API_TOKEN}'
+    }
     data = {
-        "msgtype": "markdown",
-        "markdown": {
-            "title": "ELK监控告警",
-            "text": message
-        }
+        "title": title,
+        "content": content,
+        "channel": "telegram",
+        "status": status,
+        "source": "elk-watcher",
+        "bot_id": TELEGRAM_BOT_ID
     }
     try:
-        response = requests.post(webhook, json=data, headers=headers)
+        response = requests.post(TELEGRAM_API_URL, json=data, headers=headers)
         if response.status_code == 200:
-            logger.info("钉钉消息发送成功")
+            logger.info("Telegram 告警发送成功")
         else:
-            logger.warning("钉钉消息发送失败，正在重试...")
-            # 重试发送钉钉消息
-            retry_count = 10  # 设置重试次数
+            logger.warning(f"Telegram 告警发送失败，状态码: {response.status_code}，正在重试...")
+            # 重试发送告警
+            retry_count = 10
             for i in range(retry_count):
-                time.sleep(2)  # 重试前等待2秒
-                response = requests.post(webhook, json=data, headers=headers)
+                time.sleep(2)
+                response = requests.post(TELEGRAM_API_URL, json=data, headers=headers)
                 if response.status_code == 200:
-                    logger.info(f"钉钉消息重试第{i+1}次成功")
+                    logger.info(f"Telegram 告警重试第{i+1}次成功")
                     break
             else:
-                logger.error("重试发送钉钉消息失败")
+                logger.error("重试发送 Telegram 告警失败")
     except Exception as e:
-        logger.error(f"发送钉钉消息时发生错误: {str(e)}")
+        logger.error(f"发送 Telegram 告警时发生错误: {str(e)}")
 
 
 def parse_index_date(index_name, prefix):
@@ -225,44 +233,44 @@ def cleanup_old_indices(es, dry_run=False):
 
 def send_cleanup_notification(deleted_indices, failed_indices):
     """
-    发送索引清理结果的钉钉通知
+    发送索引清理结果的 Telegram 通知
     :param deleted_indices: 成功删除的索引列表
     :param failed_indices: 删除失败的索引列表
     """
     current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # 构建消息内容
-    message = f"## 【ELK索引清理通知】\n\n"
-    message += f"**清理时间**: {current_time}\n\n"
-    message += f"**清理策略**: 删除 {INDEX_RETENTION_DAYS} 天前的索引\n\n"
-    message += f"**清理前缀**: {', '.join(INDEX_PREFIXES_TO_CLEAN)}\n\n"
+    content = f"清理时间: {current_time}\n"
+    content += f"清理策略: 删除 {INDEX_RETENTION_DAYS} 天前的索引\n"
+    content += f"清理前缀: {', '.join(INDEX_PREFIXES_TO_CLEAN)}\n\n"
 
     if deleted_indices:
-        message += f"### ✅ 成功删除 {len(deleted_indices)} 个索引\n\n"
+        content += f"✅ 成功删除 {len(deleted_indices)} 个索引\n"
         # 如果索引太多，只显示前10个和后5个
         if len(deleted_indices) > 15:
             for idx in deleted_indices[:10]:
-                message += f"- {idx}\n"
-            message += f"- ... (省略 {len(deleted_indices) - 15} 个)\n"
+                content += f"- {idx}\n"
+            content += f"- ... (省略 {len(deleted_indices) - 15} 个)\n"
             for idx in deleted_indices[-5:]:
-                message += f"- {idx}\n"
+                content += f"- {idx}\n"
         else:
             for idx in deleted_indices:
-                message += f"- {idx}\n"
-        message += "\n"
+                content += f"- {idx}\n"
+        content += "\n"
     else:
-        message += "### ℹ️ 没有需要删除的索引\n\n"
+        content += "ℹ️ 没有需要删除的索引\n\n"
 
     if failed_indices:
-        message += f"### ❌ 删除失败 {len(failed_indices)} 个索引\n\n"
+        content += f"❌ 删除失败 {len(failed_indices)} 个索引\n"
         for idx in failed_indices:
-            message += f"- {idx}\n"
-        message += "\n"
+            content += f"- {idx}\n"
+        content += "\n"
 
-    message += f"**主机IP**: 220.202.54.74\n"
+    content += f"主机IP: 220.202.54.74"
 
-    # 发送钉钉通知
-    send_dingtalk_message(dingtalk_webhook, message)
+    # 发送 Telegram 通知
+    status = "failure" if failed_indices else "success"
+    send_telegram_alert("ELK索引清理通知", content, status)
 
 
 def scheduled_cleanup():
@@ -276,9 +284,10 @@ def scheduled_cleanup():
         send_cleanup_notification(deleted_indices, failed_indices)
     else:
         logger.error("无法连接ES，索引清理任务失败")
-        send_dingtalk_message(
-            dingtalk_webhook,
-            f"【ELK索引清理失败】\n\n无法连接到Elasticsearch，索引清理任务执行失败。\n\n**主机IP**: 220.202.54.74\n**时间**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        send_telegram_alert(
+            "ELK索引清理失败",
+            f"无法连接到Elasticsearch，索引清理任务执行失败。\n主机IP: 220.202.54.74\n时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "failure"
         )
 
 
@@ -313,9 +322,10 @@ def monitor_index_updates(es):
         try:
             if not check_index_updates(es, index_name):
                 logger.warning(f"索引 {index_name} 在最近一分钟内没有更新")
-                send_dingtalk_message(
-                    dingtalk_webhook,
-                    f"【世捷通新ELK监控告警】索引 {index_name} 在最近一分钟内没有更新， 主机IP: 220.202.54.74"
+                send_telegram_alert(
+                    "世捷通新ELK监控告警",
+                    f"索引 {index_name} 在最近一分钟内没有更新\n主机IP: 220.202.54.74",
+                    "failure"
                 )
             else:
                 logger.info(f"索引 {index_name} 正常更新中")
