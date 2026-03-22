@@ -3,3 +3,4 @@ res/china.xdb
 init.sh
 tests/
 config/config.json
+**/logs
