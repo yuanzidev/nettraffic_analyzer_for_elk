@@ -342,9 +342,9 @@ def main():
     # 执行启动时的初始清理
     initial_cleanup()
 
-    # 设置每周一早上6点执行清理任务
-    schedule.every().monday.at("06:00").do(scheduled_cleanup)
-    logger.info("已设置定时任务：每周一 06:00 执行索引清理")
+    # 设置每天早上6点执行清理任务
+    schedule.every().day.at("06:00").do(scheduled_cleanup)
+    logger.info("已设置定时任务：每天 06:00 执行索引清理")
 
     # 启动定时任务线程
     schedule_thread = threading.Thread(target=run_schedule, daemon=True)
