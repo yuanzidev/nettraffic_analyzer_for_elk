@@ -233,10 +233,14 @@ def cleanup_old_indices(es, dry_run=False):
 
 def send_cleanup_notification(deleted_indices, failed_indices):
     """
-    发送索引清理结果的 Telegram 通知
+    发送索引清理结果的 Telegram 通知（仅在失败时发送）
     :param deleted_indices: 成功删除的索引列表
     :param failed_indices: 删除失败的索引列表
     """
+    # 只在有失败的索引时才发送告警
+    if not failed_indices:
+        return
+
     current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # 构建消息内容
@@ -244,33 +248,18 @@ def send_cleanup_notification(deleted_indices, failed_indices):
     content += f"清理策略: 删除 {INDEX_RETENTION_DAYS} 天前的索引\n"
     content += f"清理前缀: {', '.join(INDEX_PREFIXES_TO_CLEAN)}\n\n"
 
-    if deleted_indices:
-        content += f"✅ 成功删除 {len(deleted_indices)} 个索引\n"
-        # 如果索引太多，只显示前10个和后5个
-        if len(deleted_indices) > 15:
-            for idx in deleted_indices[:10]:
-                content += f"- {idx}\n"
-            content += f"- ... (省略 {len(deleted_indices) - 15} 个)\n"
-            for idx in deleted_indices[-5:]:
-                content += f"- {idx}\n"
-        else:
-            for idx in deleted_indices:
-                content += f"- {idx}\n"
-        content += "\n"
-    else:
-        content += "ℹ️ 没有需要删除的索引\n\n"
+    content += f"❌ 删除失败 {len(failed_indices)} 个索引\n"
+    for idx in failed_indices:
+        content += f"- {idx}\n"
+    content += "\n"
 
-    if failed_indices:
-        content += f"❌ 删除失败 {len(failed_indices)} 个索引\n"
-        for idx in failed_indices:
-            content += f"- {idx}\n"
-        content += "\n"
+    if deleted_indices:
+        content += f"✅ 成功删除 {len(deleted_indices)} 个索引\n\n"
 
     content += f"主机IP: 220.202.54.74"
 
-    # 发送 Telegram 通知
-    status = "failure" if failed_indices else "success"
-    send_telegram_alert("ELK索引清理通知", content, status)
+    # 发送 Telegram 告警
+    send_telegram_alert("ELK索引清理失败", content, "failure")
 
 
 def scheduled_cleanup():
