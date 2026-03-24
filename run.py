@@ -3,6 +3,11 @@
 # Website: https://www.yzgsa.com
 # Copyright (c) <yuanzigsa@gmail.com>
 
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ip2region', 'binding', 'python'))
+
 import json
 from nettraffic_analyzer.es import Es, Es_v2, Es_v3
 from nettraffic_analyzer.utils import *
