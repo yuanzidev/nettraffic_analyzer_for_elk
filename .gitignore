@@ -4,3 +4,4 @@ init.sh
 tests/
 config/config.json
 **/logs
+**/.DS_Store
