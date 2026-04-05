@@ -207,12 +207,9 @@ class Resolver:
                     source['flow_isp_type'] = '同网省内' if agent_province == dst_province else '同网跨省'
                 else:
                     if not dst_isp or dst_isp == "未知":
-                        source['flow_isp_type'] = '异网省内(未知)' if agent_province == dst_province else '异网跨省(未知)'
+                        source['flow_isp_type'] = '异网(未知)'
                     else:
-                        if agent_province == dst_province:
-                            source['flow_isp_type'] = f'异网省内({dst_isp})'
-                        else:
-                            source['flow_isp_type'] = f'异网跨省({dst_isp})'
+                        source['flow_isp_type'] = f'异网({dst_isp})'
 
                 cacti_data = sflow_cacti_data_map.get(int(config['relation_cacti_graph_id']), {})
                 logger.info(f"cacti_data: {cacti_data}")
