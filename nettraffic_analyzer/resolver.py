@@ -7,6 +7,7 @@ import io
 import os
 import logging
 import re
+from datetime import datetime, timezone, timedelta
 import ip2region.util as util
 import ip2region.searcher as xdb
 
@@ -163,6 +164,45 @@ class Resolver:
         ipinfo['isp'] = "中国联通" if ip and ip.startswith('120.72.50') else ipinfo['isp']
         return ipinfo
 
+    @staticmethod
+    def get_time_period(timestamp_str, node):
+        """
+        根据时间戳和节点类型判断流量所属时段
+
+        Args:
+            timestamp_str: ISO格式时间字符串 (UTC)
+            node: 节点名称
+
+        Returns:
+            str: 'ev_peak' 或 'off_pk'
+        """
+        try:
+            # 解析时间戳并转换为UTC+8
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            utc8 = timezone(timedelta(hours=8))
+            local_time = dt.astimezone(utc8)
+            hour = local_time.hour
+
+            # 判断运营商类型
+            node_upper = node.upper() if node else ''
+            if 'LT' in node_upper:
+                # 联通: 20:00-23:00 为晚高峰
+                if 20 <= hour < 23:
+                    return 'ev_peak'
+                else:
+                    return 'off_pk'
+            elif 'YD' in node_upper:
+                # 移动: 20:00-22:00 为晚高峰
+                if 20 <= hour < 22:
+                    return 'ev_peak'
+                else:
+                    return 'off_pk'
+            else:
+                # 未知节点类型，默认为闲时
+                return 'off_pk'
+        except Exception:
+            return 'off_pk'
+
     def rewrite_docs(self, docs):
         """
         重写elasticsearch查询结果，添加IP归属地信息
@@ -214,6 +254,10 @@ class Resolver:
                 cacti_data = sflow_cacti_data_map.get(int(config['relation_cacti_graph_id']), {})
                 logger.info(f"cacti_data: {cacti_data}")
 
+                # 计算流量时段
+                timestamp = source.get('@timestamp', '')
+                time_period = self.get_time_period(timestamp, config.get('node', ''))
+
                 source.update({
                     'flow_isp_info_src': src_ip_info,
                     'flow_isp_info': dst_ip_info,
@@ -225,6 +269,7 @@ class Resolver:
                     'flow_direction': config['flow_direction'],
                     'sum_traffic_in_max': cacti_data.get('traffic_in_max', 0),
                     'sum_traffic_out_max': cacti_data.get('traffic_out_max', 0),
+                    'time_period': time_period,
                 })
 
                 new_docs.append(doc)
@@ -267,6 +312,10 @@ class Resolver:
                 local_isp = local_ip_info.get('isp').replace('中国', '')
                 remote_isp = remote_ip_info.get('isp').replace('中国', '')
 
+                # 计算流量时段
+                timestamp = source.get('@timestamp', '')
+                time_period = self.get_time_period(timestamp, config.get('node', ''))
+
                 source.update({
                     'host_name': config.get('host_name', '未知'),
                     'node': config.get('node', '未知'),
@@ -280,6 +329,7 @@ class Resolver:
                     'remote_ip_region_full': f"{remote_ip} {remote_ip_info.get('province', '')}{remote_ip_info.get('city', '')}",
                     'local_ip_isp': local_isp,
                     'remote_ip_isp': remote_isp,
+                    'time_period': time_period,
                 })
 
                 new_docs.append(doc)
@@ -318,6 +368,10 @@ class Resolver:
                 local_ip_info = ip_info_cache[local_ip]
                 local_isp = local_ip_info.get('isp').replace('中国', '')
 
+                # 计算流量时段
+                timestamp = source.get('@timestamp', '')
+                time_period = self.get_time_period(timestamp, config.get('node', ''))
+
                 source.update({
                     'host_name': config.get('host_name', '未知'),
                     'node': config.get('node', '未知'),
@@ -327,6 +381,7 @@ class Resolver:
                     'local_ip_region': f"{local_ip_info.get('province', '')}{local_ip_info.get('city', '')}",
                     'local_ip_region_full': f"{local_ip} {local_ip_info.get('province', '')}{local_ip_info.get('city', '')}",
                     'local_ip_isp': local_isp,
+                    'time_period': time_period,
                 })
 
                 new_docs.append(doc)
