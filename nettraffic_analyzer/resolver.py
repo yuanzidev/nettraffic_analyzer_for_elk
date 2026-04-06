@@ -269,6 +269,8 @@ class Resolver:
                     'flow_direction': config['flow_direction'],
                     'sum_traffic_in_max': cacti_data.get('traffic_in_max', 0),
                     'sum_traffic_out_max': cacti_data.get('traffic_out_max', 0),
+                    'sum_traffic_in_avg': cacti_data.get('traffic_in_avg', 0),
+                    'sum_traffic_out_avg': cacti_data.get('traffic_out_avg', 0),
                     'time_period': time_period,
                 })
 

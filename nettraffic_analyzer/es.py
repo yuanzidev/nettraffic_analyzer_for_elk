@@ -103,6 +103,8 @@ class Es:
                 "flow_direction": source['flow_direction'],
                 "sum_traffic_in_max": source['sum_traffic_in_max'],
                 "sum_traffic_out_max": source['sum_traffic_out_max'],
+                "sum_traffic_in_avg": source.get('sum_traffic_in_avg', 0),
+                "sum_traffic_out_avg": source.get('sum_traffic_out_avg', 0),
                 "time_period": source.get('time_period', 'off_pk'),
             }
             action = {
