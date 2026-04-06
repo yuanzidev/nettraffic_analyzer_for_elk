@@ -47,7 +47,7 @@ class ProgressTracker:
                 with open(self.progress_file, 'r') as f:
                     return json.load(f)
             except Exception as e:
-                logger.warning(f"加载进度文件失败: {e}")
+                logger.warning("加载进度文件失败: {}".format(e))
         return {
             'processed_indices': {},
             'last_search_after': None,
@@ -138,7 +138,7 @@ class TimePeriodValueUpdater:
             indices.sort()
             return indices
         except Exception as e:
-            logger.error(f"获取索引列表失败: {e}")
+            logger.error("获取索引列表失败: {}".format(e))
             return []
 
     def count_docs_need_update(self, index):
@@ -157,7 +157,7 @@ class TimePeriodValueUpdater:
             response = self.es.count(index=index, body=query)
             return response['count']
         except Exception as e:
-            logger.error(f"统计索引 {index} 需要更新的文档数失败: {e}")
+            logger.error("统计索引 {} 需要更新的文档数失败: {}".format(index, e))
             return 0
 
     def fetch_docs(self, index, search_after=None):
@@ -189,7 +189,7 @@ class TimePeriodValueUpdater:
             hits = response['hits']['hits']
             return hits
         except Exception as e:
-            logger.error(f"查询索引 {index} 失败: {e}")
+            logger.error("查询索引 {} 失败: {}".format(index, e))
             return []
 
     def prepare_bulk_actions(self, docs):
@@ -241,12 +241,12 @@ class TimePeriodValueUpdater:
                     success_count += 1
                 else:
                     failed_count += 1
-                    logger.debug(f"更新失败: {info}")
+                    logger.debug("更新失败: {}".format(info))
 
             return success_count, failed_count
 
         except Exception as e:
-            logger.error(f"批量更新失败: {e}")
+            logger.error("批量更新失败: {}".format(e))
             return 0, len(actions)
 
     def process_index(self, index, progress_tracker):
@@ -256,14 +256,14 @@ class TimePeriodValueUpdater:
         """
         # 检查索引是否已完成
         if progress_tracker.is_index_completed(index):
-            logger.info(f"索引 {index} 已完成，跳过")
+            logger.info("索引 {} 已完成，跳过".format(index))
             return 0, 0
 
         # 获取上次处理的进度
         index_progress = progress_tracker.get_index_progress(index)
         search_after = index_progress.get('search_after') if index_progress else None
 
-        logger.info(f"开始处理索引: {index}")
+        logger.info("开始处理索引: {}".format(index))
         total_index_updated = 0
         total_index_failed = 0
 
@@ -298,13 +298,13 @@ class TimePeriodValueUpdater:
             if total_index_updated % 10000 == 0:
                 progress_tracker.save_progress(index, search_after)
 
-            logger.info(f"索引 {index}: 本批处理 {len(docs)} 条, "
-                       f"累计更新 {total_index_updated} 条, "
-                       f"失败 {total_index_failed} 条")
+            logger.info("索引 {}: 本批处理 {} 条, "
+                       "累计更新 {} 条, "
+                       "失败 {} 条".format(index, len(docs), total_index_updated, total_index_failed))
 
         # 标记索引完成
         progress_tracker.mark_index_completed(index)
-        logger.info(f"索引 {index} 处理完成, 共更新 {total_index_updated} 条")
+        logger.info("索引 {} 处理完成, 共更新 {} 条".format(index, total_index_updated))
 
         return total_index_updated, total_index_failed
 
@@ -323,14 +323,14 @@ class TimePeriodValueUpdater:
         all_indices = []
         for pattern in index_patterns:
             indices = self.get_indices(pattern)
-            logger.info(f"模式 {pattern} 匹配到 {len(indices)} 个索引")
+            logger.info("模式 {} 匹配到 {} 个索引".format(pattern, len(indices)))
             all_indices.extend(indices)
 
         if not all_indices:
             logger.error("没有找到匹配的索引")
             return
 
-        logger.info(f"共找到 {len(all_indices)} 个索引需要处理")
+        logger.info("共找到 {} 个索引需要处理".format(len(all_indices)))
 
         # 统计总数
         total_need_update = 0
@@ -339,13 +339,13 @@ class TimePeriodValueUpdater:
                 continue
             count = self.count_docs_need_update(index)
             total_need_update += count
-            logger.info(f"索引 {index} 需要更新 {count} 条文档")
+            logger.info("索引 {} 需要更新 {} 条文档".format(index, count))
 
         if total_need_update == 0:
             logger.info("没有需要更新的文档")
             return
 
-        logger.info(f"总计需要更新约 {total_need_update} 条文档")
+        logger.info("总计需要更新约 {} 条文档".format(total_need_update))
 
         # 处理每个索引
         for i, index in enumerate(all_indices):
@@ -354,7 +354,7 @@ class TimePeriodValueUpdater:
                 break
 
             if skip_completed and progress_tracker.is_index_completed(index):
-                logger.info(f"跳过已完成的索引: {index}")
+                logger.info("跳过已完成的索引: {}".format(index))
                 continue
 
             updated, failed = self.process_index(index, progress_tracker)
@@ -365,19 +365,24 @@ class TimePeriodValueUpdater:
             avg_time = elapsed / (i + 1)
             remaining = avg_time * (len(all_indices) - i - 1)
 
-            logger.info(f"总体进度: {i + 1}/{len(all_indices)} ({progress:.1f}%), "
-                       f"已更新: {self.stats['total_updated']}, "
-                       f"失败: {self.stats['total_failed']}, "
-                       f"预计剩余时间: {remaining/60:.1f} 分钟")
+            logger.info("总体进度: {}/{} ({:.1f}%), "
+                       "已更新: {}, "
+                       "失败: {}, "
+                       "预计剩余时间: {:.1f} 分钟".format(
+                           i + 1, len(all_indices), progress,
+                           self.stats['total_updated'],
+                           self.stats['total_failed'],
+                           remaining / 60
+                       ))
 
         # 最终统计
         total_elapsed = time.time() - start_time
         logger.info("=" * 60)
         logger.info("更新任务完成!")
-        logger.info(f"总耗时: {total_elapsed/60:.2f} 分钟")
-        logger.info(f"总共获取: {self.stats['total_fetched']} 条")
-        logger.info(f"成功更新: {self.stats['total_updated']} 条")
-        logger.info(f"更新失败: {self.stats['total_failed']} 条")
+        logger.info("总耗时: {:.2f} 分钟".format(total_elapsed / 60))
+        logger.info("总共获取: {} 条".format(self.stats['total_fetched']))
+        logger.info("成功更新: {} 条".format(self.stats['total_updated']))
+        logger.info("更新失败: {} 条".format(self.stats['total_failed']))
         logger.info("=" * 60)
 
 
