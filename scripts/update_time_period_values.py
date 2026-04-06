@@ -10,8 +10,8 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
-from dateutil import parser
+from datetime import datetime
+from dateutil import parser, tz
 
 # 添加项目根目录到路径
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,13 +58,13 @@ class ProgressTracker:
     def save_progress(self, index, search_after=None, processed_count=0):
         """保存进度"""
         self.progress['processed_indices'][index] = {
-            'last_update': datetime.now(timezone.utc).isoformat(),
+            'last_update': datetime.now(tz.tzutc()).isoformat(),
             'search_after': search_after
         }
         self.progress['total_processed'] += processed_count
         self.progress['last_search_after'] = search_after
         if not self.progress['start_time']:
-            self.progress['start_time'] = datetime.now(timezone.utc).isoformat()
+            self.progress['start_time'] = datetime.now(tz.tzutc()).isoformat()
 
         with open(self.progress_file, 'w') as f:
             json.dump(self.progress, f, indent=2)
@@ -82,7 +82,7 @@ class ProgressTracker:
         if index not in self.progress['processed_indices']:
             self.progress['processed_indices'][index] = {}
         self.progress['processed_indices'][index]['completed'] = True
-        self.progress['processed_indices'][index]['completed_at'] = datetime.now(timezone.utc).isoformat()
+        self.progress['processed_indices'][index]['completed_at'] = datetime.now(tz.tzutc()).isoformat()
 
         with open(self.progress_file, 'w') as f:
             json.dump(self.progress, f, indent=2)
