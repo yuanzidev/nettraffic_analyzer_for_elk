@@ -185,6 +185,9 @@ python run.py
 | `flow_direction` | 流量方向 |
 | `sum_traffic_in_max` | 入站流量峰值 |
 | `sum_traffic_out_max` | 出站流量峰值 |
+| `sum_traffic_in_avg` | 入站流量平均值 |
+| `sum_traffic_out_avg` | 出站流量平均值 |
+| `time_period` | 流量时段（晚高峰/闲时）|
 
 ### IPBW Agent 模式字段
 | 字段名 | 说明 |
@@ -198,6 +201,17 @@ python run.py
 | `local_ip_isp` | 本地 IP 运营商 |
 | `remote_ip_isp` | 远程 IP 运营商 |
 | `ipType` | IP 类型 |
+| `time_period` | 流量时段（晚高峰/闲时）|
+
+### time_period 字段说明
+
+`time_period` 字段用于标识流量所属的时段，根据时间戳和节点类型自动判断：
+
+| 节点类型 | 晚高峰 | 闲时 |
+|---------|-----------------|---------------|
+| 联通 (LT) | 20:00-23:00 | 23:00-20:00 |
+| 移动 (YD) | 20:00-22:00 | 22:00-20:00 |
+| 其他 | - | 闲时 |
 
 ## 性能特性
 
