@@ -174,7 +174,7 @@ class Resolver:
             node: 节点名称
 
         Returns:
-            str: 'ev_peak' 或 'off_pk'
+            str: '晚高峰' 或 '闲时'
         """
         try:
             # 解析时间戳并转换为UTC+8
@@ -188,20 +188,20 @@ class Resolver:
             if 'LT' in node_upper:
                 # 联通: 20:00-23:00 为晚高峰
                 if 20 <= hour < 23:
-                    return 'ev_peak'
+                    return '晚高峰'
                 else:
-                    return 'off_pk'
+                    return '闲时'
             elif 'YD' in node_upper:
                 # 移动: 20:00-22:00 为晚高峰
                 if 20 <= hour < 22:
-                    return 'ev_peak'
+                    return '晚高峰'
                 else:
-                    return 'off_pk'
+                    return '闲时'
             else:
                 # 未知节点类型，默认为闲时
-                return 'off_pk'
+                return '闲时'
         except Exception:
-            return 'off_pk'
+            return '闲时'
 
     def rewrite_docs(self, docs):
         """

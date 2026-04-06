@@ -105,7 +105,7 @@ class Es:
                 "sum_traffic_out_max": source['sum_traffic_out_max'],
                 "sum_traffic_in_avg": source.get('sum_traffic_in_avg', 0),
                 "sum_traffic_out_avg": source.get('sum_traffic_out_avg', 0),
-                "time_period": source.get('time_period', 'off_pk'),
+                "time_period": source.get('time_period', '闲时'),
             }
             action = {
                 "_op_type": "update",
@@ -241,7 +241,7 @@ class Es_v2(Es):
                 "remote_ip_region_full": source['remote_ip_region_full'],
                 "local_ip_info": source['local_ip_info'],
                 "remote_ip_info": source['remote_ip_info'],
-                "time_period": source.get('time_period', 'off_pk'),
+                "time_period": source.get('time_period', '闲时'),
             }
             action = {
                 "_op_type": "update",
@@ -335,7 +335,7 @@ class Es_v3(Es):
                 "interface": source['interface'],
                 "local_ip_region": source['local_ip_region'],
                 "local_ip_info": source['local_ip_info'],
-                "time_period": source.get('time_period', 'off_pk'),
+                "time_period": source.get('time_period', '闲时'),
             }
             action = {
                 "_op_type": "update",

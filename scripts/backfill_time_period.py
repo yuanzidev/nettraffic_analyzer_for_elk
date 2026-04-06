@@ -127,18 +127,18 @@ class TimePeriodBackfill:
             node_upper = node.upper() if node else ''
             if 'LT' in node_upper:
                 if 20 <= hour < 23:
-                    return 'ev_peak'
+                    return '晚高峰'
                 else:
-                    return 'off_pk'
+                    return '闲时'
             elif 'YD' in node_upper:
                 if 20 <= hour < 22:
-                    return 'ev_peak'
+                    return '晚高峰'
                 else:
-                    return 'off_pk'
+                    return '闲时'
             else:
-                return 'off_pk'
+                return '闲时'
         except Exception:
-            return 'off_pk'
+            return '闲时'
 
     def get_indices(self, pattern):
         """获取匹配模式的索引列表"""
