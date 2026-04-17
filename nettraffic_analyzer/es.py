@@ -106,6 +106,12 @@ class Es:
                 "sum_traffic_in_avg": source.get('sum_traffic_in_avg', 0),
                 "sum_traffic_out_avg": source.get('sum_traffic_out_avg', 0),
                 "time_period": source.get('time_period', '闲时'),
+                "src_country": source.get('src_country', '未知'),
+                "src_country_code": source.get('src_country_code', 'XX'),
+                "dst_country": source.get('dst_country', '未知'),
+                "dst_country_code": source.get('dst_country_code', 'XX'),
+                "is_overseas": source.get('is_overseas', False),
+                "hit_sensitive_country": source.get('hit_sensitive_country', False),
             }
             action = {
                 "_op_type": "update",

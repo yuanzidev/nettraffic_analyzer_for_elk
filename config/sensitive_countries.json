@@ -1,0 +1,4 @@
+{
+  "sensitive_country_codes": ["KP", "IR", "SY", "RU", "BY", "VE", "CU"],
+  "notes": "ISO-3166-1 alpha-2 码，命中后文档会被标记 hit_sensitive_country=true；修改后需重启 run.py 生效。"
+}

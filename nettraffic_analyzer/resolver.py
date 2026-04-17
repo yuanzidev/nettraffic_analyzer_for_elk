@@ -14,12 +14,48 @@ import ip2region.searcher as xdb
 logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ip2region', 'data')
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+
+# 境外 IPv6 国家名 → ISO 3166-1 alpha-2 码兜底映射（world_ipv4.xdb 只覆盖 IPv4）
+COUNTRY_NAME_TO_CODE = {
+    "中国": "CN", "美国": "US", "日本": "JP", "韩国": "KR", "朝鲜": "KP",
+    "德国": "DE", "英国": "GB", "法国": "FR", "俄罗斯": "RU", "新加坡": "SG",
+    "香港": "HK", "台湾": "TW", "澳门": "MO", "澳大利亚": "AU", "加拿大": "CA",
+    "印度": "IN", "巴西": "BR", "意大利": "IT", "西班牙": "ES", "荷兰": "NL",
+    "瑞典": "SE", "瑞士": "CH", "挪威": "NO", "芬兰": "FI", "丹麦": "DK",
+    "波兰": "PL", "乌克兰": "UA", "白俄罗斯": "BY", "土耳其": "TR", "伊朗": "IR",
+    "以色列": "IL", "沙特阿拉伯": "SA", "阿联酋": "AE", "越南": "VN", "泰国": "TH",
+    "马来西亚": "MY", "印度尼西亚": "ID", "菲律宾": "PH", "南非": "ZA", "墨西哥": "MX",
+    "阿根廷": "AR", "智利": "CL", "委内瑞拉": "VE", "古巴": "CU", "叙利亚": "SY",
+    "新西兰": "NZ", "爱尔兰": "IE", "葡萄牙": "PT", "希腊": "GR", "奥地利": "AT",
+    "比利时": "BE", "捷克": "CZ", "匈牙利": "HU",
+}
+
+
+def _load_sensitive_countries():
+    """启动时加载敏感国家 ISO 码列表，文件缺失或格式异常返回空 set，不影响启动。"""
+    path = os.path.join(CONFIG_DIR, 'sensitive_countries.json')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        codes = data.get('sensitive_country_codes', [])
+        return set(c.upper() for c in codes if isinstance(c, str))
+    except FileNotFoundError:
+        logger.warning(f"敏感国家配置文件不存在: {path}，将不标记任何敏感国家")
+        return set()
+    except Exception as e:
+        logger.warning(f"读取敏感国家配置失败: {e}，将不标记任何敏感国家")
+        return set()
+
+
+SENSITIVE_COUNTRY_CODES = _load_sensitive_countries()
 
 
 class Ip2RegionSearcher:
     _instance = None
     _v4_searcher = None
     _v6_searcher = None
+    _world_v4_searcher = None
 
     @classmethod
     def get_instance(cls):
@@ -31,6 +67,7 @@ class Ip2RegionSearcher:
     def _init_searchers(self):
         v4_db_path = os.path.join(DATA_DIR, 'ip2region_v4.xdb')
         v6_db_path = os.path.join(DATA_DIR, 'ip2region_v6.xdb')
+        world_v4_db_path = os.path.join(DATA_DIR, 'world_ipv4.xdb')
 
         v4_handle = io.open(v4_db_path, "rb")
         v4_header = util.load_header(v4_handle)
@@ -46,6 +83,20 @@ class Ip2RegionSearcher:
         self._v6_searcher = xdb.new_with_vector_index(v6_version, v6_db_path, v6_vector_index)
         v6_handle.close()
 
+        # 世界 IPv4 地址库（~80MB），启动预加载；仅用于非中国 IPv4 的详细信息补全
+        if os.path.exists(world_v4_db_path):
+            world_v4_handle = io.open(world_v4_db_path, "rb")
+            world_v4_header = util.load_header(world_v4_handle)
+            world_v4_version = util.version_from_header(world_v4_header)
+            world_v4_vector_index = util.load_vector_index(world_v4_handle)
+            self._world_v4_searcher = xdb.new_with_vector_index(
+                world_v4_version, world_v4_db_path, world_v4_vector_index
+            )
+            world_v4_handle.close()
+            logger.info(f"世界 IPv4 XDB 加载成功: {world_v4_db_path}")
+        else:
+            logger.warning(f"世界 IPv4 XDB 不存在: {world_v4_db_path}，境外 IP 将仅依赖基础库兜底")
+
     def search(self, ip_str):
         try:
             ip_bytes = util.parse_ip(ip_str)
@@ -57,11 +108,29 @@ class Ip2RegionSearcher:
         else:
             return self._v6_searcher.search(ip_bytes)
 
+    def search_world_v4(self, ip_str):
+        """查询世界 IPv4 地址库，仅用于已判定为非中国 IPv4 的补充查询。"""
+        if self._world_v4_searcher is None:
+            return ""
+        try:
+            ip_bytes = util.parse_ip(ip_str)
+        except ValueError:
+            return ""
+        if len(ip_bytes) != 4:
+            return ""
+        try:
+            return self._world_v4_searcher.search(ip_bytes)
+        except Exception as e:
+            logger.warning(f"world_ipv4 查询失败 ip={ip_str}: {e}")
+            return ""
+
     def close(self):
         if self._v4_searcher:
             self._v4_searcher.close()
         if self._v6_searcher:
             self._v6_searcher.close()
+        if self._world_v4_searcher:
+            self._world_v4_searcher.close()
         Ip2RegionSearcher._instance = None
 
 
@@ -72,12 +141,13 @@ class Resolver:
     @staticmethod
     def resolve_ip_region(original_content):
         """
-        解析 xdb 原始查询内容，返回省份、城市、区县、运营商信息
+        解析 xdb 原始查询内容，返回国家、省份、城市、区县、运营商信息
 
-        :param original_content: xdb 查询返回的字符串，格式为: 国家|省份|城市|ISP|iso-alpha2-code
-        :return: 包含省份、城市、区县、运营商信息的字典
+        :param original_content: xdb 查询返回的字符串，格式为: 国家|省份|城市|ISP
+        :return: 包含国家、省份、城市、区县、运营商信息的字典
         """
         default_result = {
+            'country': '未知',
             'province': '未知',
             'city': '未知',
             'district': '未知',
@@ -88,12 +158,48 @@ class Resolver:
             parts = original_content.split('|')
             if len(parts) >= 4:
                 return {
+                    'country': parts[0] if parts[0] and parts[0] != '0' else "未知",
                     'province': parts[1] if parts[1] and parts[1] != '0' else "未知",
                     'city': parts[2] if parts[2] and parts[2] != '0' else "未知",
                     'district': '未知',
                     'isp': parts[3] if parts[3] and parts[3] != '0' else "未知",
                 }
         return default_result
+
+    def resolve_country_info(self, ip):
+        """
+        综合国家码解析：先走现有中国 XDB，若判定为非中国 IPv4 再走世界 XDB 补全国家名与 ISO 码。
+        返回 dict 在 resolve_ip_region 基础上追加 country_code、hit_sensitive_country。
+        """
+        base = self.resolve_ip_region(self.ip2region.search(ip))
+        country = base.get('country', '未知')
+
+        if country == '中国':
+            code = 'CN'
+        elif self.is_ipv4(ip):
+            # 基础库判定非中国 IPv4（含返回"未知"）→ 走世界库补全国家名与 ISO 码
+            world_raw = self.ip2region.search_world_v4(ip)
+            code = 'XX'
+            if world_raw:
+                parts = world_raw.split('|')
+                if len(parts) >= 6:
+                    if parts[1] and parts[1] != '0':
+                        country = parts[1]
+                    if parts[5] and parts[5] != '0':
+                        code = parts[5]
+                    # world XDB 的 ISP 字段(parts[6]) 比基础库更准，命中则覆盖
+                    if len(parts) >= 7 and parts[6] and parts[6] != '0':
+                        base['isp'] = parts[6]
+            if code == 'XX' and country != '未知':
+                code = COUNTRY_NAME_TO_CODE.get(country, 'XX')
+        else:
+            # 非中国 IPv6，或未知 IP：用名称映射兜底
+            code = COUNTRY_NAME_TO_CODE.get(country, 'XX') if country != '未知' else 'XX'
+
+        base['country'] = country
+        base['country_code'] = code
+        base['hit_sensitive_country'] = code in SENSITIVE_COUNTRY_CODES
+        return base
 
     @staticmethod
     def is_ipv4(ip):
@@ -223,8 +329,7 @@ class Resolver:
                 if not all([src_ip, dst_ip, host_ip, agent_ip]):
                     continue
                 if agent_ip not in ip_info_cache:
-                    result = self.ip2region.search(agent_ip)
-                    ip_info_cache[agent_ip] = self.rewrite_ipinfo(agent_ip, self.resolve_ip_region(result))
+                    ip_info_cache[agent_ip] = self.rewrite_ipinfo(agent_ip, self.resolve_country_info(agent_ip))
                 agent_ip_info = ip_info_cache[agent_ip]
 
                 is_ipv4 = self.is_ipv4(dst_ip)
@@ -232,8 +337,7 @@ class Resolver:
 
                 for ip in (src_ip, dst_ip):
                     if ip not in ip_info_cache:
-                        result = self.ip2region.search(ip)
-                        ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_ip_region(result))
+                        ip_info_cache[ip] = self.rewrite_ipinfo(ip, self.resolve_country_info(ip))
 
                 src_ip_info = ip_info_cache[src_ip]
                 dst_ip_info = ip_info_cache[dst_ip]
@@ -258,6 +362,13 @@ class Resolver:
                 timestamp = source.get('@timestamp', '')
                 time_period = self.get_time_period(timestamp, config.get('node', ''))
 
+                src_country = src_ip_info.get('country', '未知')
+                src_code = src_ip_info.get('country_code', 'XX')
+                dst_country = dst_ip_info.get('country', '未知')
+                dst_code = dst_ip_info.get('country_code', 'XX')
+                is_overseas = src_code != 'CN' or dst_code != 'CN'
+                hit_sensitive = src_ip_info.get('hit_sensitive_country', False) or dst_ip_info.get('hit_sensitive_country', False)
+
                 source.update({
                     'flow_isp_info_src': src_ip_info,
                     'flow_isp_info': dst_ip_info,
@@ -272,6 +383,12 @@ class Resolver:
                     'sum_traffic_in_avg': cacti_data.get('traffic_in_avg', 0),
                     'sum_traffic_out_avg': cacti_data.get('traffic_out_avg', 0),
                     'time_period': time_period,
+                    'src_country': src_country,
+                    'src_country_code': src_code,
+                    'dst_country': dst_country,
+                    'dst_country_code': dst_code,
+                    'is_overseas': is_overseas,
+                    'hit_sensitive_country': hit_sensitive,
                 })
 
                 new_docs.append(doc)
