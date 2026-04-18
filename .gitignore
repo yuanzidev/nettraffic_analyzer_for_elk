@@ -5,3 +5,4 @@ tests/
 config/config.json
 **/logs
 **/.DS_Store
+.idea/
