@@ -110,7 +110,7 @@ class Es:
                 "src_country_code": source.get('src_country_code', 'XX'),
                 "dst_country": source.get('dst_country', '未知'),
                 "dst_country_code": source.get('dst_country_code', 'XX'),
-                "is_overseas": source.get('is_overseas', False),
+                "region_type": source.get('region_type', '境内'),
                 "hit_sensitive_country": source.get('hit_sensitive_country', False),
             }
             action = {

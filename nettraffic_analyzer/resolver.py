@@ -366,7 +366,7 @@ class Resolver:
                 src_code = src_ip_info.get('country_code', 'XX')
                 dst_country = dst_ip_info.get('country', '未知')
                 dst_code = dst_ip_info.get('country_code', 'XX')
-                is_overseas = src_code != 'CN' or dst_code != 'CN'
+                region_type = '境外' if (src_code != 'CN' or dst_code != 'CN') else '境内'
                 hit_sensitive = src_ip_info.get('hit_sensitive_country', False) or dst_ip_info.get('hit_sensitive_country', False)
 
                 source.update({
@@ -387,7 +387,7 @@ class Resolver:
                     'src_country_code': src_code,
                     'dst_country': dst_country,
                     'dst_country_code': dst_code,
-                    'is_overseas': is_overseas,
+                    'region_type': region_type,
                     'hit_sensitive_country': hit_sensitive,
                 })
 
