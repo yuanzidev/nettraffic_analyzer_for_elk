@@ -369,14 +369,17 @@ class Resolver:
                 region_type = '境外' if (src_code != 'CN' or dst_code != 'CN') else '境内'
                 hit_sensitive = src_ip_info.get('hit_sensitive_country', False) or dst_ip_info.get('hit_sensitive_country', False)
 
+                src_region_suffix = src_country if src_code != 'CN' else f"{src_ip_info.get('province', '')}{src_ip_info.get('city', '')}"
+                dst_region_suffix = dst_country if dst_code != 'CN' else f"{dst_ip_info.get('province', '')}{dst_ip_info.get('city', '')}"
+
                 source.update({
                     'flow_isp_info_src': src_ip_info,
                     'flow_isp_info': dst_ip_info,
                     'node': config['node'],
                     'customer': config['costumer'],
                     'sw_interface': config['switch'],
-                    'src_ip_region': f"{src_ip} {src_ip_info.get('province', '')}{src_ip_info.get('city', '')}",
-                    'dst_ip_region': f"{dst_ip} {dst_ip_info.get('province', '')}{dst_ip_info.get('city', '')}",
+                    'src_ip_region': f"{src_ip} {src_region_suffix}",
+                    'dst_ip_region': f"{dst_ip} {dst_region_suffix}",
                     'flow_direction': config['flow_direction'],
                     'sum_traffic_in_max': cacti_data.get('traffic_in_max', 0),
                     'sum_traffic_out_max': cacti_data.get('traffic_out_max', 0),
