@@ -302,28 +302,113 @@ def initial_cleanup():
         logger.error("启动时无法连接ES，跳过初始清理")
 
 
+def restart_logstash():
+    """重启 Logstash 容器"""
+    logger.info("正在重启 Logstash...")
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "logstash"],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0:
+            logger.info("Logstash 重启命令执行成功")
+            return True
+        else:
+            logger.error(f"Logstash 重启失败: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error("Logstash 重启超时")
+        return False
+    except Exception as e:
+        logger.error(f"重启 Logstash 时发生错误: {str(e)}")
+        return False
+
+
+def get_logstash_logs(tail=20):
+    """获取 Logstash 最近的日志"""
+    try:
+        result = subprocess.run(
+            ["docker", "logs", "--tail", str(tail), "logstash"],
+            capture_output=True, text=True, timeout=30
+        )
+        logs = result.stdout
+        if len(logs) > 2000:
+            logs = logs[-2000:]
+        return logs
+    except Exception as e:
+        logger.error(f"获取 Logstash 日志失败: {str(e)}")
+        return f"获取日志失败: {str(e)}"
+
+
+def wait_for_logstash_healthy(es, index_name, timeout=300):
+    """等待 Logstash 恢复正常，持续检查索引是否有新数据写入"""
+    logger.info(f"等待 Logstash 恢复健康，超时 {timeout} 秒...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if check_index_updates(es, index_name):
+            logger.info("Logstash 已恢复健康，检测到新数据写入")
+            return True
+        time.sleep(30)
+    logger.warning(f"等待 Logstash 恢复超时 ({timeout}秒)")
+    return False
+
+
 def monitor_index_updates(es):
     """
     监控索引更新的主循环
+    连续3次未更新则告警并自动重启 Logstash，恢复后发送健康通知
     """
+    ALERT_THRESHOLD = 3
+    fail_count = 0
+
     while True:
         index_name = f"sflow-{datetime.datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
         try:
             if not check_index_updates(es, index_name):
-                logger.warning(f"索引 {index_name} 在最近一分钟内没有更新")
-                send_telegram_alert(
-                    "世捷通新ELK监控告警",
-                    f"索引 {index_name} 在最近一分钟内没有更新\n主机IP: 220.202.54.74",
-                    "failure"
-                )
+                fail_count += 1
+                logger.warning(f"索引 {index_name} 未更新 (连续第 {fail_count} 次)")
+
+                if fail_count >= ALERT_THRESHOLD:
+                    send_telegram_alert(
+                        "世捷通新ELK监控告警",
+                        f"索引 {index_name} 连续 {fail_count} 分钟未更新，即将重启 Logstash\n主机IP: 220.202.54.74",
+                        "failure"
+                    )
+
+                    if restart_logstash():
+                        healthy = wait_for_logstash_healthy(es, index_name)
+                        logs = get_logstash_logs(tail=20)
+
+                        if healthy:
+                            send_telegram_alert(
+                                "世捷通新ELK监控 - 恢复通知",
+                                f"重启完成，已进入健康状态\n主机IP: 220.202.54.74\n\n最近日志:\n{logs}",
+                                "recovery"
+                            )
+                        else:
+                            send_telegram_alert(
+                                "世捷通新ELK监控 - 重启后仍异常",
+                                f"Logstash 已重启但等待超时，数据仍未恢复\n主机IP: 220.202.54.74\n\n最近日志:\n{logs}",
+                                "failure"
+                            )
+                    else:
+                        send_telegram_alert(
+                            "世捷通新ELK监控 - 重启失败",
+                            f"Logstash 重启失败，请人工介入\n主机IP: 220.202.54.74",
+                            "failure"
+                        )
+
+                    fail_count = 0
             else:
+                if fail_count > 0:
+                    logger.info(f"索引 {index_name} 恢复更新，重置失败计数 (之前连续失败 {fail_count} 次)")
+                fail_count = 0
                 logger.info(f"索引 {index_name} 正常更新中")
 
-            # 等待一分钟
             time.sleep(60)
         except Exception as e:
             logger.error(f"监控过程中发生错误: {str(e)}")
-            time.sleep(60)  # 发生错误时也等待一分钟后继续
+            time.sleep(60)
 
 
 def main():
